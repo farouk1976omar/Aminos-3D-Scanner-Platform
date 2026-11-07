@@ -8,12 +8,19 @@ from PIL import Image
 from typing import TypedDict, List, Annotated
 from dotenv import load_dotenv
 
-# تحميل المتغيرات من ملف .env تلقائياً
+# ضبط إعدادات الصفحة أولاً دائماً وفق معايير Streamlit القياسية
+st.set_page_config(
+    page_title="منصة الذكاء الاصطناعي لكواشف المعادن والماسحات 3D",
+    page_icon="📡",
+    layout="wide"
+)
+
+# تحميل المتغيرات من ملف .env تلقائياً إن وجد
 load_dotenv()
 
 import google.generativeai as genai
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
 # استدعاء Tavily بشكل آمن
 try:
@@ -28,11 +35,15 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_secret(key_name: str) -> str:
-    """جلب المفاتيح من بيئة العمل أو من أسرار Streamlit Cloud بأمان"""
+    """جلب المفاتيح من بيئة العمل أو من أسرار Streamlit Cloud بأمان تام ودون أي أخطاء"""
     val = os.environ.get(key_name, "")
-    if not val and hasattr(st, "secrets") and key_name in st.secrets:
-        val = str(st.secrets[key_name])
-    return val.strip()
+    if not val:
+        try:
+            if hasattr(st, "secrets") and key_name in st.secrets:
+                val = str(st.secrets[key_name])
+        except Exception:
+            pass
+    return (val or "").strip()
 
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 TAVILY_API_KEY = get_secret("TAVILY_API_KEY")
@@ -245,25 +256,37 @@ def build_workflow():
     workflow.add_edge("DSP", "Firmware")
     workflow.add_edge("Firmware", END)
     
-    db_path = os.path.join(BASE_DIR, "agents_memory.db")
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    memory = SqliteSaver(conn)
+    memory = MemorySaver()
     return workflow.compile(checkpointer=memory)
 
 # ==========================================
 # 6. واجهة المستخدم التفاعلية (Streamlit UI)
 # ==========================================
-st.set_page_config(page_title="منصة الذكاء الاصطناعي لكواشف المعادن والماسحات 3D", page_icon="📡", layout="wide")
 st.title("📡 منصة الوكلاء الأذكياء لتصميم وتطوير كواشف المعادن والماسحات ثلاثية الأبعاد")
 
-# التحقق من مفاتيح التشغيل
+with st.sidebar:
+    st.header("⚙️ إعدادات المشروع ومفاتيح API")
+    if not GEMINI_API_KEY:
+        user_key = st.text_input("🔑 مفتاح Google Gemini API:", type="password", help="أدخل مفتاح Gemini هنا لتشغيل الوكلاء").strip()
+        if user_key:
+            GEMINI_API_KEY = user_key
+            try:
+                genai.configure(api_key=GEMINI_API_KEY)
+                for model_name in ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-1.5-flash']:
+                    try:
+                        flash_model = genai.GenerativeModel(model_name)
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
 if not GEMINI_API_KEY:
-    st.error("🚨 مفتاح GEMINI_API_KEY غير موجود في ملف .env أو في متغيرات النظام! يرجى إضافته إلى ملف `.env`.")
-    st.info("💡 يمكنك نسخ الملف `.env.example` إلى `.env` وإضافة مفتاحك من Google AI Studio.")
-    st.stop()
+    st.warning("⚠️ يرجى إدخال مفتاح Google Gemini API في القائمة الجانبية (أو إضافته في إعدادات Secrets في Streamlit Cloud) لتشغيل المنصة.")
+    st.info("💡 يمكنك الحصول على مفتاحك مجاناً وبسرعة من منصة [Google AI Studio](https://aistudio.google.com).")
 
 if not TAVILY_API_KEY:
-    st.warning("ℹ️ مفتاح TAVILY_API_KEY غير متوفر. سيقوم وكيل الأبحاث بالعمل بالاستناد إلى المعرفة الهندسية المدمجة لـ Gemini.")
+    st.sidebar.info("ℹ️ محرك Tavily للأبحاث اختياري. في حال عدم توفره، سيعتمد وكيل الأبحاث على قاعدة المعرفة الهندسية المدمجة لـ Gemini.")
 
 with st.sidebar:
     st.header("⚙️ إعدادات المشروع")
